@@ -1,5 +1,9 @@
 #!/usr/bin/perl -w
 #
+# gentex, a latex output hack based on genhtml
+#
+#########################
+#
 #   Copyright (c) International Business Machines  Corp., 2002,2012
 #
 #   This program is free software;  you can redistribute it and/or modify
@@ -206,6 +210,8 @@ sub warn_handler($);
 sub die_handler($);
 sub parse_ignore_errors(@);
 sub rate($$;$$$);
+sub rate40($$;$$$);
+
 
 
 # HTML related prototypes
@@ -218,6 +224,8 @@ sub write_css_file();
 sub write_description_file($$$$$$$);
 sub write_function_table(*$$$$$$$$$$);
 
+sub write_tex(*$);
+sub write_tex_tabs(*$);
 sub write_html(*$);
 sub write_html_prolog(*$$);
 sub write_html_epilog(*$;$);
@@ -231,7 +239,7 @@ sub write_file_table(*$$$$$$$);
 sub write_file_table_prolog(*$@);
 sub write_file_table_entry(*$$$@);
 sub write_file_table_detail_entry(*$@);
-sub write_file_table_epilog(*);
+sub write_file_table_epilog(*$$);
 
 sub write_test_table_prolog(*$);
 sub write_test_table_entry(*$$);
@@ -284,7 +292,7 @@ our $html_prolog_file;	# Custom HTML prolog file (up to and including <body>)
 our $html_epilog_file;	# Custom HTML epilog file (from </body> onwards)
 our $html_prolog;	# Actual HTML prolog
 our $html_epilog;	# Actual HTML epilog
-our $html_ext = "html";	# Extension for generated HTML files
+our $html_ext = "tex";	# Extension for generated HTML files
 our $html_gzip = 0;	# Compress with gzip
 our $demangle_cpp = 0;	# Demangle C++ function names
 our @opt_ignore_errors;	# Ignore certain error classes during processing
@@ -3275,11 +3283,40 @@ sub classify_rate($$$$)
 
 
 #
+# write_tex(filehandle, tex_code)
+#
+# Write out TEX_CODE to FILEHANDLE while removing a leading tabulator mark
+# in each line of TEX_CODE.
+#
+
+sub write_tex(*$)
+{
+	local *TEX_HANDLE = $_[0];
+	my $tex_code = $_[1];
+
+	# Remove leading tab from all lines
+	$tex_code =~ s/^\t//gm;
+
+	print(TEX_HANDLE $tex_code)
+		or die("ERROR: cannot write TEX data ($!)\n");
+}
+
+
+sub write_tex_tabs(*$)
+{
+	local *TEX_HANDLE = $_[0];
+	my $tex_code = $_[1];
+
+	print(TEX_HANDLE $tex_code)
+		or die("ERROR: cannot write TEX data ($!)\n");
+}
+#
 # write_html(filehandle, html_code)
 #
 # Write out HTML_CODE to FILEHANDLE while removing a leading tabulator mark
 # in each line of HTML_CODE.
 #
+# NOPped to skip writing out actual HTML
 
 sub write_html(*$)
 {
@@ -3289,8 +3326,8 @@ sub write_html(*$)
 	# Remove leading tab from all lines
 	$html_code =~ s/^\t//gm;
 
-	print(HTML_HANDLE $html_code)
-		or die("ERROR: cannot write HTML data ($!)\n");
+#	print(HTML_HANDLE $html_code)
+#		or die("ERROR: cannot write HTML data ($!)\n");
 }
 
 
@@ -3430,6 +3467,45 @@ sub write_file_table_prolog(*$@)
 	}
 	$file_width = 100 - $num_columns * $width;
 
+	write_tex($handle, <<END_OF_HTML);
+\\begin{table}[H]
+\\centering
+END_OF_HTML
+
+	write_tex($handle, "\\begin{tabu}{l");
+	my $frist = 1;
+	foreach $col (@columns) {
+		my ($heading, $cols) = @{$col};
+
+		for (; $cols; $cols--)
+		{
+			write_tex($handle, " l");
+		}
+	}
+
+	write_tex($handle, <<END_OF_HTML);
+}
+\\toprule
+\\textbf{$file_heading} & 
+END_OF_HTML
+	$frist = 1;
+	foreach $col (@columns) {
+		my ($heading, $cols) = @{$col};
+		my $firstcol = 1;
+		unless ($frist)
+		{
+			write_tex($handle, " & ");
+		}
+		write_tex($handle, "\\multicolumn{$cols}{l}{\\textbf{$heading}}");
+		$frist = 0;
+	}
+
+	write_tex($handle, <<END_OF_HTML);
+ \\\\
+\\midrule
+END_OF_HTML
+
+
 	# Table definition
 	write_html($handle, <<END_OF_HTML);
 	  <center>
@@ -3483,6 +3559,7 @@ sub write_file_table_entry(*$$$@)
 	my $file_code;
 	my $entry;
 	my $esc_filename = escape_html($filename);
+	my $tex_filename = escape($filename);
 
 	# Add link to source if provided
 	if (defined($page_link) && $page_link ne "") {
@@ -3490,6 +3567,8 @@ sub write_file_table_entry(*$$$@)
 	} else {
 		$file_code = $esc_filename;
 	}
+
+	write_tex($handle, "$tex_filename ");
 
 	# First column: filename
 	write_html($handle, <<END_OF_HTML);
@@ -3502,26 +3581,42 @@ END_OF_HTML
 		my $bar_graph;
 		my $class;
 		my $rate;
+		my $rate40;
+
+		# Get rate color and text
+		if ($found == 0) {
+			$rate = "-";
+			$rate40 = "0";
+			$class = "Hi";
+		} else {
+			$rate = rate($hit, $found, "\\%");
+			$rate40 = rate40($hit, $found, undef, 0);
+			$class = $rate_name[classify_rate($found, $hit,
+					    $med, $hi)];
+		}
 
 		# Generate bar graph if requested
 		if ($graph) {
 			$bar_graph = get_bar_graph_code($base_dir, $found,
 							$hit);
+
+
+			write_tex($handle, <<END_OF_HTML);
+& \\setlength{\\unitlength}{1cm}
+\\begin{picture}(2, 0.25)
+\\put(0,0){\\colorbox{coverage_$class}{\\raisebox{0mm}[1.5mm][0mm]{\\hspace{$rate40 mm}}}}
+\\put(0,0){\\framebox[2cm]{\\raisebox{0mm}[1.5mm][0mm]{}}}
+\\end{picture}
+END_OF_HTML
+
 			write_html($handle, <<END_OF_HTML);
 	      <td class="coverBar" align="center">
 	        $bar_graph
 	      </td>
 END_OF_HTML
 		}
-		# Get rate color and text
-		if ($found == 0) {
-			$rate = "-";
-			$class = "Hi";
-		} else {
-			$rate = rate($hit, $found, "&nbsp;%");
-			$class = $rate_name[classify_rate($found, $hit,
-					    $med, $hi)];
-		}
+		write_tex($handle, "& $rate & $hit / $found ");
+
 		write_html($handle, <<END_OF_HTML);
 	      <td class="coverPer$class">$rate</td>
 	      <td class="coverNum$class">$hit / $found</td>
@@ -3530,6 +3625,10 @@ END_OF_HTML
 	# End of row
         write_html($handle, <<END_OF_HTML);
 	    </tr>
+END_OF_HTML
+
+      write_tex($handle, <<END_OF_HTML);
+\\\\
 END_OF_HTML
 }
 
@@ -3581,9 +3680,18 @@ END_OF_HTML
 # Write end of file table HTML code.
 #
 
-sub write_file_table_epilog(*)
+sub write_file_table_epilog(*$$)
 {
 	# *************************************************************
+
+	write_tex($_[0], <<END_OF_HTML);
+\\bottomrule
+\\end{tabu}
+\\label{fig:fig_label_$_[1]}
+\\caption{$_[2]}
+\\label{table:table_label_$_[1]}
+\\end{table}
+END_OF_HTML
 
 	write_html($_[0], <<END_OF_HTML)
 	  </table>
@@ -3715,6 +3823,22 @@ sub write_source_prolog(*)
 <pre class="source">
 END_OF_HTML
 	;
+
+	write_tex($_[0], <<END_OF_HTML);
+\\lstset{
+  numbers=left, 
+  tabsize=4, 
+  breaklines=true, 
+  breakatwhitespace=true, 
+  basicstyle=\\tiny, 
+  keywordstyle=\\color{blue}, 
+  backgroundcolor=\\color{white},
+  language=C++,
+  frame=single
+  }
+
+	\\begin{lstlisting}[escapechar=§]
+END_OF_HTML
 
 	# *************************************************************
 }
@@ -3930,6 +4054,7 @@ sub write_source_line(*$$$$$$)
 	my ($handle, $line, $source, $count, $converted, $brdata,
 	    $add_anchor) = @_;
 	my $source_format;
+	my $source_format_tex;
 	my $count_format;
 	my $result;
 	my $anchor_start = "";
@@ -3944,21 +4069,25 @@ sub write_source_line(*$$$$$$)
 	if (!defined($count)) {
 		$result		= "";
 		$source_format	= "";
+		$source_format_tex	= "§{\\setlength{\\fboxsep}{2pt}\\colorbox{cov_nop}{ : }} §";
 		$count_format	= " "x$count_field_width;
 	}
 	elsif ($count == 0) {
 		$result		= $count;
 		$source_format	= '<span class="lineNoCov">';
+		$source_format_tex	= "§{\\setlength{\\fboxsep}{2pt}\\colorbox{cov_nocov}{ : }} §";
 		$count_format	= format_count($count, $count_field_width);
 	}
 	elsif ($converted && defined($highlight)) {
 		$result		= "*".$count;
 		$source_format	= '<span class="lineDiffCov">';
+		$source_format_tex	= "§{\\setlength{\\fboxsep}{2pt}\\colorbox{cov_diff}{ : }} §";
 		$count_format	= format_count($count, $count_field_width);
 	}
 	else {
 		$result		= $count;
 		$source_format	= '<span class="lineCov">';
+		$source_format_tex	= "§{\\setlength{\\fboxsep}{2pt}\\colorbox{cov_cov}{ : }} §";
 		$count_format	= format_count($count, $count_field_width);
 	}
 	$result .= ":".$source;
@@ -3983,6 +4112,11 @@ sub write_source_line(*$$$$$$)
 	$html .= $anchor_end."\n";
 
 	write_html($handle, $html);
+
+	my $tex = $source_format_tex;
+	$tex .= escape($source);
+
+	write_tex_tabs($handle, $tex . "\n");
 
 	if ($br_coverage) {
 		# Add lines for overlong branch information
@@ -4016,6 +4150,9 @@ sub write_source_epilog(*)
 
 END_OF_HTML
 	;
+	write_tex($_[0], <<END_OF_HTML);
+\\end{lstlisting}
+END_OF_HTML
 
 	# *************************************************************
 }
@@ -4471,7 +4608,8 @@ sub get_file_code($$$$)
 	}
 	$result .= get_sort_code($link, "Sort by name", $base);
 
-	return $result;
+#	return $result;
+	return $text;
 }
 
 sub get_line_code($$$$$)
@@ -4505,7 +4643,8 @@ sub get_line_code($$$$$)
 	# Add sort button
 	$result .= get_sort_code($sort_link, "Sort by line coverage", $base);
 
-	return $result;
+#	return $result;
+	return $text;
 }
 
 sub get_func_code($$$$)
@@ -4522,7 +4661,8 @@ sub get_func_code($$$$)
 		}
 	}
 	$result .= get_sort_code($link, "Sort by function coverage", $base);
-	return $result;
+	return $text;
+#	return $result;
 }
 
 sub get_br_code($$$$)
@@ -4539,7 +4679,8 @@ sub get_br_code($$$$)
 		}
 	}
 	$result .= get_sort_code($link, "Sort by branch coverage", $base);
-	return $result;
+	return $text;
+#	return $result;
 }
 
 #
@@ -4697,7 +4838,7 @@ sub write_file_table(*$$$$$$$)
 		}
 	}
 
-	write_file_table_epilog(*HTML_HANDLE);
+	write_file_table_epilog(*HTML_HANDLE, substr("".$testfnchash,7,12), $fileview ? "File coverage" : "Directory coverage");
 }
 
 
@@ -5016,6 +5157,7 @@ sub write_source($$$$$$$)
 	my $datafunc = get_hash_reverse($funcdata);
 	my $add_anchor;
 	my @file;
+	my $basesource_filename = basename($source_filename);
 
 	if ($_[2])
 	{
@@ -5048,6 +5190,10 @@ sub write_source($$$$$$$)
 		@file = <SOURCE_HANDLE>;
 	}
 	
+	write_tex(*HTML_HANDLE, <<END_OF_HTML);
+	\\lstset{caption=$basesource_filename, label=label_$basesource_filename, captionpos=b}
+END_OF_HTML
+
 	write_source_prolog(*HTML_HANDLE);
 	$line_number = 0;
 	foreach (@file) {
@@ -5140,6 +5286,11 @@ sub funcview_get_sorted($$$)
 		    keys(%{$sumfncdata}));
 }
 
+sub escape {
+    $_[0] =~ s/([_])/\\$1/g;
+    return $_[0];
+}
+
 #
 # write_function_table(filehandle, source_file, sumcount, funcdata,
 #		       sumfnccount, testfncdata, sumbrcount, testbrdata,
@@ -5182,6 +5333,15 @@ sub write_function_table(*$$$$$$$$$$)
 END_OF_HTML
 	;
 	
+	write_tex(*HTML_HANDLE, <<END_OF_HTML);
+\\begin{table}[H]
+\\centering
+\\begin{tabu}{l l}
+\\toprule
+\\textbf{Function Name} & \\textbf{Hit Count}\\\\
+\\midrule
+END_OF_HTML
+
 	# Get a sorted table
 	foreach $func (funcview_get_sorted($funcdata, $sumfncdata, $type)) {
 		if (!defined($funcdata->{$func}))
@@ -5217,6 +5377,11 @@ END_OF_HTML
             </tr>
 END_OF_HTML
                 ;
+        $name =~ escape($name);
+
+        write_tex(*HTML_HANDLE, <<END_OF_HTML);
+		$name & $count \\\\
+END_OF_HTML
 	}
 	write_html(*HTML_HANDLE, <<END_OF_HTML)
 	  </table>
@@ -5224,6 +5389,18 @@ END_OF_HTML
 	  </center>
 END_OF_HTML
 	;
+
+    my $sourcefn = substr $source, 0, -9;
+
+	write_tex(*HTML_HANDLE, <<END_OF_HTML);
+\\bottomrule
+\\end{tabu}
+\\label{fig:fig_label_$sourcefn}
+\\caption{Function Coverage in $sourcefn}
+\\label{table:table_label_$sourcefn}
+\\end{table}
+END_OF_HTML
+
 }
 
 
@@ -5793,6 +5970,29 @@ sub rate($$;$$$)
 		$rate = sprintf("%.*f", $precision, 1 / 10 ** $precision);
         } elsif ($rate == 100 && $hit != $found) {
 		$rate = sprintf("%.*f", $precision, 100 - 1 / 10 ** $precision);
+	}
+
+	return sprintf("%*s", $width, $rate.$suffix);
+}
+
+sub rate40($$;$$$)
+{
+        my ($hit, $found, $suffix, $precision, $width) = @_;
+        my $rate; 
+
+	# Assign defaults if necessary
+        $precision	= 1	if (!defined($precision));
+	$suffix		= ""	if (!defined($suffix));
+	$width		= 0	if (!defined($width));
+        
+        return sprintf("%*s", $width, "-") if (!defined($found) || $found == 0);
+        $rate = sprintf("%.*f", $precision, $hit * 20 / $found);
+
+	# Adjust rates if necessary
+        if ($rate == 0 && $hit > 0) {
+		$rate = sprintf("%.*f", $precision, 1 / 2 ** $precision);
+        } elsif ($rate == 40 && $hit != $found) {
+		$rate = sprintf("%.*f", $precision, 20 - 1 / 2 ** $precision);
 	}
 
 	return sprintf("%*s", $width, $rate.$suffix);
