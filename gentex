@@ -5292,6 +5292,7 @@ sub escape_tex {
 #
 #  \& \% \$ \# \_ \{ \} \textasciitilde \textasciicircum \textbackslash
 #
+    $_[0] =~ s/([\\])/\\textbackslash/g;
     $_[0] =~ s/([&])/\\&/g;
     $_[0] =~ s/([%])/\\%/g;
     $_[0] =~ s/([#])/\\#/g;
@@ -5300,7 +5301,6 @@ sub escape_tex {
     $_[0] =~ s/([}])/\\}/g;
     $_[0] =~ s/([~])/\\textasciitilde/g;
     $_[0] =~ s/([\^])/\\textasciicircum/g;
-    $_[0] =~ s/([\\])/\\textbackslash/g;
     return $_[0];
 }
 
