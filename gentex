@@ -4114,7 +4114,8 @@ sub write_source_line(*$$$$$$)
 	write_html($handle, $html);
 
 	my $tex = $source_format_tex;
-	$tex .= escape_tex($source);
+#	$tex .= escape_tex($source);  no need to escape
+	$tex .= $source;
 
 	write_tex_tabs($handle, $tex . "\n");
 
